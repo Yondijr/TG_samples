@@ -1,0 +1,6 @@
+For 3 Layer Model: 
+ 25 /41 /74 / 84
+ 6 /10 /17 / 20
+ 
+For Full Model:
+5 /10 /17/20

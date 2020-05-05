@@ -1,4 +1,21 @@
 # utility functions for the evaluation
+import torch
+import pickle
+from transformers import GPT2Tokenizer, GPT2LMHeadModel, modeling_utils, GPT2Config, modeling_gpt2, GPT2Model, GPT2PreTrainedModel, GPT2Config
+import copy
+import operator
+import json
+import numpy as np
+import pandas as pd
+import os
+from os import listdir
+from os.path import isfile, join
+import language_check
+from functools import reduce
+import difflib
+import matplotlib.pyplot as plt
+
+
 
 def finetuned(path):
     model = GPT2LMHeadModel.from_pretrained('gpt2')
@@ -140,3 +157,111 @@ def grammar_stats(stats,inp):
     eps = (stats[1]/1000) ##needs mor variablle
     out = [nWrong,nMistakes,tokensN,ept,eps]
     return out 
+
+
+def load_datasets():
+    train = open("EOS_new_full_train_5K.txt","r+",encoding="utf-8")
+    train = train.read()
+    train = train.split("<|endoftext|>")
+    train = split_train_2(train)
+    
+    test1 = open("EOS_new_test.txt","r+",encoding="utf-8")
+    test1 =  test1.read()
+    test1 =  test1.split("<|endoftext|>")
+    test1 = split_train_2( test1)
+    
+    test2 = open("EOS_new_full_test.txt","r+",encoding="utf-8")
+    test2 =  test2.read()
+    test2 =  test2.split("<|endoftext|>")
+    test2 = split_train_2( test2)
+    
+    test3 = open("EOS_new_test_no_filter.txt","r+",encoding="utf-8")
+    test3 =  test3.read()
+    test3 =  test3.split("<|endoftext|>")
+    test3 = split_train_2( test3)
+    
+    test4 = open("EOS_new_test_no_filter_700max.txt","r+",encoding="utf-8")
+    test4 =  test4.read()
+    test4 =  test4.split("<|endoftext|>")
+    test4 = split_train_2( test4)
+    
+    out = {}
+    out["train"] = train
+    out["test_l"] = test1
+    out["test_700"] = test2
+    out["test_nf_l"] = test3 
+    out["test_nf_700"] = test4
+    return out
+
+
+def load_examples(folder):
+    onlyfiles = [f for f in listdir(folder) if isfile(join(folder, f))]
+    out = [None] * len(onlyfiles)
+    for x in onlyfiles: 
+        where = int(x.split("_")[-1][:-2])
+        out[where-1] = pickle.load(open(folder + "/" + x, "rb"))
+    return out
+
+def load_model(model):
+    out = {}
+    output = [dI for dI in os.listdir(model) if os.path.isdir(os.path.join(model,dI))]
+    for x in output: 
+        if x[0] == ".":
+            pass
+        else:
+            inp =load_examples(model + "/" + x)
+            out[x] = inp
+    return out
+
+def translation_accuracy_new_for(translations,data,maxCount=1000):
+    count = 0
+    somewhere = 0
+    repSomewhere = 0
+    noMistake = 0
+    correctL = 0
+    AverageLengthT = 0
+    AverageLengthR = 0
+    ALevenstein = 0
+    for x in range (maxCount):
+        translation = format_sentence_2(translations[x])
+        cond = format_sentence_2(data[0][x])
+        real = format_sentence_2(data[1][x])
+        if real == translation: 
+            count +=1
+        if real in translation:
+            somewhere +=1
+        if translation in cond:
+            repSomewhere +=1
+        if real in cond:
+            noMistake +=1 
+        if len(translation) == len(real):
+            correctL +=1
+        AverageLengthT += len(translation)
+        AverageLengthR += len(real)
+        #ALevenstein += levenshtein(translation, real)
+    return [count/maxCount,somewhere/maxCount, repSomewhere/maxCount, noMistake/maxCount,
+            correctL/maxCount,AverageLengthT/maxCount,AverageLengthR/maxCount,ALevenstein/maxCount]  
+
+
+def calculate_stats(translations,data,name):
+    results = []
+    for x in range(len(translations)):
+        results.append(translation_accuracy_new_for(translations[x],data))
+    pickle.dump(results, open("saves/" + name + ".p","wb"))
+    
+    
+def calculate_model(model,data):
+    calculate_stats(model["3"]['test_all_wrong_700'],data["test_700"],"3_test_all_wrong_700")
+    calculate_stats(model["3"]['test_all_wrong_long'],data["test_l"],"3_test_all_wrong_long")
+    calculate_stats(model["3"]['test_no_filter_long'],data["test_nf_l"],"3_test_no_filter_long")
+    calculate_stats(model["3"]['train'],data["train"],"3_train")
+    
+    calculate_stats(model["6"]['test_all_wrong_700'],data["test_700"],"6_test_all_wrong_700")
+    calculate_stats(model["6"]['test_all_wrong_long'],data["test_l"],"6_test_all_wrong_long")
+    calculate_stats(model["6"]['test_no_filter_long'],data["test_nf_l"],"6_test_no_filter_long")
+    calculate_stats(model["6"]['train'],data["train"],"6_train")
+    
+    calculate_stats(model["full"]['test_all_wrong_700'],data["test_700"],"full_test_all_wrong_700")
+    calculate_stats(model["full"]['test_all_wrong_long'],data["test_l"],"full_test_all_wrong_long")
+    calculate_stats(model["full"]['test_no_filter_long'],data["test_nf_l"],"full_test_no_filter_long")
+    calculate_stats(model["full"]['train'],data["train"],"full_train")

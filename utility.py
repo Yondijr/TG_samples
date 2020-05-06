@@ -15,7 +15,73 @@ from functools import reduce
 import difflib
 import matplotlib.pyplot as plt
 
+def reload(model):
+    out = {}
+    out["test_700"] = pickle.load(open("saves/" + model + "_test_all_wrong_700.p","rb"))
+    out["test_long"] =pickle.load(open("saves/" + model + "_test_all_wrong_long.p","rb"))
+    out["test_nf_long"] =pickle.load(open("saves/" + model + "_test_no_filter_long.p","rb"))
+    out["train"] =pickle.load(open("saves/" + model + "_train.p","rb"))
+    return out
 
+def extend_x(data):
+    out = []
+    for x in range(len(data)):
+        out.append([data[x],[5,10,17,20]])
+    return np.array(out)
+
+def format_reloads_model(data1,data2,data3,key):
+    titles = ["Correct Trans","Trans included", "Rep included","Real in cond","Len Trans = Real","Length Trans","Length Real","Average Levenstein Real/Trans"]
+    plt.figure(figsize=(20,20))
+    formated1 = extend_x(np.array(data1[key]).T)
+    formated3 = extend_x(np.array(data3[key]).T)
+    for x in range(len(titles)):
+        plt.subplot(int(str(42) + str(x+1)))
+        plt.title(titles[x])
+        plt.plot(formated1[x][1],formated1[x][0])
+        plt.plot(np.array(data2[key]).T[x])
+        plt.plot(formated3[x][1],formated3[x][0])
+        plt.legend(["l3","l6",'full'])
+
+def format_reloads_model(data):
+    titles = ["Correct Trans","Trans included", "Rep included","Real in cond","Len Trans = Real","Length Trans","Length Real","Average Levenstein Real/Trans"]
+    train = np.array(data["train"]).T.tolist()
+    test1 = np.array(data["test_700"]).T.tolist()
+    test2 = np.array(data['test_long']).T.tolist()
+    test3 = np.array(data['test_nf_long']).T.tolist()
+    graphs = {}
+    for x in range(len(train)):
+        graphs[titles[x]] = np.array([train[x],test1[x],test2[x],test3[x]])
+    plt.figure(figsize=(20,20))
+    for x in range(len(titles)):
+        plt.subplot(int(str(42) + str(x+1)))
+        plt.title(titles[x])
+        if len(graphs[titles[x]].T) != 20: 
+            formated = extend_x(graphs[titles[x]])
+            for w in formated:
+                plt.plot(w[1],w[0])
+        else:
+            plt.plot(graphs[titles[x]].T)
+        plt.legend(["train","test_700",'test_long','test_nf_long'])
+
+def load_data():
+    out  ={}
+    out["3"] = load_model("3layer")
+    out["6"] = load_model("6layer")
+    out["full"] = load_model("full")
+    return out
+
+def get_untrained_model_sent():
+    data = open("splitOnEosDataset_v2_test.txt","r+")
+    data= data.read()
+    data = data.split("<|endoftext|>")
+    return data[:1000]
+
+def full_pipeline_base():
+    out = get_untrained_model_sent()
+    corrected, stats = correct(out)
+    freq_stats = build_frequency_stats(stats)
+    stats_f = grammar_stats(stats,out)
+    return np.array(stats_f), freq_stats
 
 def finetuned(path):
     model = GPT2LMHeadModel.from_pretrained('gpt2')

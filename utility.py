@@ -20,6 +20,7 @@ def reload(model):
     out["test_700"] = pickle.load(open("saves/" + model + "_test_all_wrong_700.p","rb"))
     out["test_long"] =pickle.load(open("saves/" + model + "_test_all_wrong_long.p","rb"))
     out["test_nf_long"] =pickle.load(open("saves/" + model + "_test_no_filter_long.p","rb"))
+    out["test_nf_700"] =pickle.load(open("saves/" + model + "_test_no_filter_700.p","rb"))
     out["train"] =pickle.load(open("saves/" + model + "_train.p","rb"))
     return out
 
@@ -29,7 +30,7 @@ def extend_x(data):
         out.append([data[x],[5,10,17,20]])
     return np.array(out)
 
-def format_reloads_model(data1,data2,data3,key):
+def format_reloads_dataset(data1,data2,data3,key):
     titles = ["Correct Trans","Trans included", "Rep included","Real in cond","Len Trans = Real","Length Trans","Length Real","Average Levenstein Real/Trans"]
     plt.figure(figsize=(20,20))
     formated1 = extend_x(np.array(data1[key]).T)
@@ -48,9 +49,10 @@ def format_reloads_model(data):
     test1 = np.array(data["test_700"]).T.tolist()
     test2 = np.array(data['test_long']).T.tolist()
     test3 = np.array(data['test_nf_long']).T.tolist()
+    test4 = np.array(data['test_nf_700']).T.tolist()
     graphs = {}
     for x in range(len(train)):
-        graphs[titles[x]] = np.array([train[x],test1[x],test2[x],test3[x]])
+        graphs[titles[x]] = np.array([train[x],test1[x],test2[x],test3[x],test4[x]])
     plt.figure(figsize=(20,20))
     for x in range(len(titles)):
         plt.subplot(int(str(42) + str(x+1)))
@@ -61,7 +63,7 @@ def format_reloads_model(data):
                 plt.plot(w[1],w[0])
         else:
             plt.plot(graphs[titles[x]].T)
-        plt.legend(["train","test_700",'test_long','test_nf_long'])
+        plt.legend(["train","test_700",'test_long','test_nf_long','test_nf_700'])
 
 def load_data():
     out  ={}
@@ -76,12 +78,50 @@ def get_untrained_model_sent():
     data = data.split("<|endoftext|>")
     return data[:1000]
 
-def full_pipeline_base():
+def correct_base():
     out = get_untrained_model_sent()
     corrected, stats = correct(out)
-    freq_stats = build_frequency_stats(stats)
-    stats_f = grammar_stats(stats,out)
-    return np.array(stats_f), freq_stats
+    pickle.dump(corrected, open("saves/base_translation.p","wb"))
+    pickle.dump(stats, open("saves/base_translation_stats.p","wb"))
+    
+def correct_model_dataset(model,name):
+    correctStack = []
+    statsStack = []
+    for x in model:
+        print("oof")
+        corrected, stats = correct(x)
+        correctStack.append(corrected)
+        statsStack.append(stats) 
+    pickle.dump(correctStack, open("saves/"+ name + "_translation.p","wb"))
+    pickle.dump(statsStack, open("saves/"+ name + "_translation_stats.p","wb"))
+
+def load_base():
+    corrected = pickle.load(open("saves/base_translation.p","rb"))
+    stats = pickle.load(open("saves/base_translation_stats.p","rb"))
+    out = grammar_stats(stats)
+    return out
+
+def load_grammar():
+    out = {}
+    for x in ["3","6","full"]:
+        model = []
+        for y in ['train','test_all_wrong_700','test_all_wrong_long','test_no_filter_long','test_no_filter_700']:
+            stats = pickle.load(open("saves/"+ x + "_" + y + "_translation_stats.p","rb"))
+            package = []
+            for z in stats:
+                package.append(grammar_stats(z))
+            model.append(package)
+        out[x] = np.array(model)  
+    return out
+    
+def grammar_stats(stats):
+    nWrong = stats[0]
+    nMistakes = stats[1]
+    ept = (nMistakes/stats[-1])
+    eps = (stats[1]/1000) ##needs mor variablle
+    out = [nWrong,nMistakes,stats[-1],ept,eps]
+    return out 
+
 
 def finetuned(path):
     model = GPT2LMHeadModel.from_pretrained('gpt2')
@@ -167,6 +207,8 @@ def build_dict_mistakes(items):
 
 
 def correct(text):
+    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+    tokensN = 0
     corrected = []
     wrongN = 0
     mistakesN = 0
@@ -178,8 +220,10 @@ def correct(text):
     tool = language_check.LanguageTool('en-US')
     for instance in text: 
         sentence = instance.replace("<|endoftext|>","")
-        if sentence[0] == " ":
-            sentence = sentence[1:]
+        if len(sentence) > 0:
+            if sentence[0] == " ":
+                sentence = sentence[1:]
+        tokensN += len(tokenizer.encode(sentence))
         matches = tool.check(sentence)
         if len(matches) > 0: 
             corrected.append(language_check.correct(sentence, matches))
@@ -193,8 +237,9 @@ def correct(text):
                 replacements.append((old,new,sentenceN))
         else:
             noMistakes.append(sentenceN)
+            corrected.append(sentence)
         sentenceN+=1
-    stats = [wrongN,mistakesN,rulesApplied,types,replacements,noMistakes]
+    stats = [wrongN,mistakesN,rulesApplied,types,replacements,noMistakes,tokensN]
     return corrected, stats
 
 
@@ -211,18 +256,6 @@ def build_frequency_stats(data):
     sorted_sentenceErrorRate  = sorted(sentenceErrorRate.items(), key=operator.itemgetter(1))
     sorted_sentenceErrorRate.reverse()
     return [sorted_rules,sorted_types,sorted_specific_mistakes,sorted_sentenceErrorRate]
-
-def grammar_stats(stats,inp):
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-    tokensN = 0
-    for x in inp: 
-        tokensN += len(tokenizer.encode(x))
-    nWrong = stats[0]
-    nMistakes = stats[1]
-    ept = (nMistakes/tokensN)
-    eps = (stats[1]/1000) ##needs mor variablle
-    out = [nWrong,nMistakes,tokensN,ept,eps]
-    return out 
 
 
 def load_datasets():
@@ -320,14 +353,60 @@ def calculate_model(model,data):
     calculate_stats(model["3"]['test_all_wrong_700'],data["test_700"],"3_test_all_wrong_700")
     calculate_stats(model["3"]['test_all_wrong_long'],data["test_l"],"3_test_all_wrong_long")
     calculate_stats(model["3"]['test_no_filter_long'],data["test_nf_l"],"3_test_no_filter_long")
+    calculate_stats(model["3"]['test_no_filter_700'],data["test_nf_700"],"3_test_no_filter_700")
     calculate_stats(model["3"]['train'],data["train"],"3_train")
     
     calculate_stats(model["6"]['test_all_wrong_700'],data["test_700"],"6_test_all_wrong_700")
     calculate_stats(model["6"]['test_all_wrong_long'],data["test_l"],"6_test_all_wrong_long")
     calculate_stats(model["6"]['test_no_filter_long'],data["test_nf_l"],"6_test_no_filter_long")
+    calculate_stats(model["6"]['test_no_filter_700'],data["test_nf_700"],"6_test_no_filter_700")
     calculate_stats(model["6"]['train'],data["train"],"6_train")
     
     calculate_stats(model["full"]['test_all_wrong_700'],data["test_700"],"full_test_all_wrong_700")
     calculate_stats(model["full"]['test_all_wrong_long'],data["test_l"],"full_test_all_wrong_long")
     calculate_stats(model["full"]['test_no_filter_long'],data["test_nf_l"],"full_test_no_filter_long")
+    calculate_stats(model["full"]['test_no_filter_700'],data["test_nf_700"],"full_test_no_filter_700")
     calculate_stats(model["full"]['train'],data["train"],"full_train")
+    
+    
+
+def correct_data(trans):
+    for x in ["3","6","full"]:
+        for y in ['train','test_all_wrong_700','test_all_wrong_long','test_no_filter_long','test_no_filter_700']:
+            correct_model_dataset(trans[x][y],x + "_" + y)
+            
+def format_reloads_model_2(data,key):
+    titles = ["Number of wrong sentences", "Number of Mistakes", "Number of tokens",
+          "Errors per Token","Error per sentence"]
+    plt.figure(figsize=(20,20))
+    
+    for x in range(len(titles)):
+        plt.subplot(int(str(32) + str(x+1)))
+        plt.title(titles[x])
+        if key != "6":
+            formatted = extend_x_2(data[key],x)
+            for graph in formatted: 
+                plt.plot(graph[1],graph[0])      
+        else:
+            plt.plot(data[key][:,:,x].T)
+        plt.legend(["train","test_700",'test_long','test_nf_long','test_nf_700'])
+
+def format_reloads_dataset_2(data,key):
+    titles = ["Number of wrong sentences", "Number of Mistakes", "Number of tokens",
+          "Errors per Token","Error per sentence"]
+    plt.figure(figsize=(20,20))
+    values = [data["3"][key],data["6"][key],data["full"][key]]
+    for x in range(len(titles)):
+        plt.subplot(int(str(32) + str(x+1)))
+        plt.title(titles[x])
+        plt.plot([5,10,17,20],np.array(values[0]).T[x].tolist())
+        plt.plot(np.array(values[1]).T[x])
+        plt.plot([5,10,17,20],np.array(values[2]).T[x].tolist())
+        plt.legend(["l3","l6",'full'])
+
+def extend_x_2(data,where):
+    axis = [5,10,17,20]
+    out = []
+    for x in data[:,:,where]: 
+        out.append(np.array([x,axis]))
+    return out

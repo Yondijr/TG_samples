@@ -76,11 +76,11 @@ def get_untrained_model_sent():
     data = open("splitOnEosDataset_v2_test.txt","r+")
     data= data.read()
     data = data.split("<|endoftext|>")
-    return data[:1000]
+    return data[:5000]
 
 def correct_base():
     out = get_untrained_model_sent()
-    corrected, stats = correct(out)
+    corrected, stats = correct(out,True)
     pickle.dump(corrected, open("saves/base_translation.p","wb"))
     pickle.dump(stats, open("saves/base_translation_stats.p","wb"))
     
@@ -89,7 +89,7 @@ def correct_model_dataset(model,name):
     statsStack = []
     for x in model:
         print("oof")
-        corrected, stats = correct(x)
+        corrected, stats = correct(x,True)
         correctStack.append(corrected)
         statsStack.append(stats) 
     pickle.dump(correctStack, open("saves/"+ name + "_translation.p","wb"))
@@ -98,7 +98,7 @@ def correct_model_dataset(model,name):
 def load_base():
     corrected = pickle.load(open("saves/base_translation.p","rb"))
     stats = pickle.load(open("saves/base_translation_stats.p","rb"))
-    out = grammar_stats(stats)
+    out = grammar_stats(stats,int(len(corrected)+stats[-1]))
     return out
 
 def load_grammar():
@@ -114,12 +114,12 @@ def load_grammar():
         out[x] = np.array(model)  
     return out
     
-def grammar_stats(stats):
+def grammar_stats(stats,nsentences=1000):
     nWrong = stats[0]
     nMistakes = stats[1]
-    ept = (nMistakes/stats[-1])
-    eps = (stats[1]/1000) ##needs mor variablle
-    out = [nWrong,nMistakes,stats[-1],ept,eps]
+    ept = (nMistakes/stats[-2])
+    eps = (stats[1]/nsentences) ##needs mor variablle
+    out = [nWrong,nMistakes,stats[-2],ept,eps,stats[-1]]
     return out 
 
 
@@ -205,12 +205,27 @@ def build_dict_mistakes(items):
             out2[x[2]] = 1
     return out1,out2
 
+def filter_trash (sentences,indices,maximum):
+    out1 = []
+    out2 = []
+    toDelete = []
+    for x in (indices):
+        if x[1] > maximum:
+            toDelete.append(x[0])
+            
+    for index in sorted(toDelete, reverse=True):
+        del sentences[0][index]
+        del sentences[1][index]
+    
+    print (str(len(toDelete)) + " were deleted since they had more than" +  str(maximum) + " mistakes")
+    return sentences
 
-def correct(text):
+def correct(text,trashFilter = False):
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     tokensN = 0
     corrected = []
     wrongN = 0
+    filterCount = 0
     mistakesN = 0
     rulesApplied = []
     replacements = []
@@ -225,21 +240,26 @@ def correct(text):
                 sentence = sentence[1:]
         tokensN += len(tokenizer.encode(sentence))
         matches = tool.check(sentence)
-        if len(matches) > 0: 
-            corrected.append(language_check.correct(sentence, matches))
-            wrongN += 1
-            for rule in matches: 
-                mistakesN +=1
-                rulesApplied.append(rule.ruleId)
-                types.append(rule.category)
-                new = rule.replacements
-                old = sentence[rule.fromx:rule.tox]
-                replacements.append((old,new,sentenceN))
+        if len(matches) > 0:
+            if len(matches) > 100 and trashFilter == True:
+                filterCount += 1
+            else:
+                
+                corrected.append(language_check.correct(sentence, matches))
+                wrongN += 1
+                for rule in matches: 
+                    mistakesN +=1
+                    rulesApplied.append(rule.ruleId)
+                    types.append(rule.category)
+                    new = rule.replacements
+                    old = sentence[rule.fromx:rule.tox]
+                    replacements.append((old,new,sentenceN))
+                sentenceN+=1
         else:
             noMistakes.append(sentenceN)
             corrected.append(sentence)
-        sentenceN+=1
-    stats = [wrongN,mistakesN,rulesApplied,types,replacements,noMistakes,tokensN]
+            sentenceN+=1
+    stats = [wrongN,mistakesN,rulesApplied,types,replacements,noMistakes,tokensN,filterCount]
     return corrected, stats
 
 
@@ -290,6 +310,34 @@ def load_datasets():
     out["test_700"] = test2
     out["test_nf_l"] = test3 
     out["test_nf_700"] = test4
+    return out
+
+
+def load_and_split_finetune():
+    onlyfiles = [f for f in listdir("classic") if isfile(join("classic", f))]
+    out = [None]* len(onlyfiles)
+    for file in onlyfiles:
+        where = int(file.split("_")[-1][:-4])
+        texts = open("classic/" + file,"r+",encoding="utf-8")
+        texts = texts.read()
+        texts = texts.split("<|endoftext|>")
+        prep = []
+        for block in texts:
+            sentence = block.replace(". ", ".<|splitter|>")
+            sentence = sentence.replace("? ", "?<|splitter|>")
+            sentence = sentence.replace("! ", "!<|splitter|>")
+            sentence = sentence.replace(".\n", ".\n<|splitter|>")
+            sentence = sentence.replace(".\n\n", ".\n\n<|splitter|>")
+            sentence = sentence.replace("?\n", "?\n<|splitter|>")
+            sentence = sentence.replace("?\n\n", "?\n\n<|splitter|>")
+            sentence = sentence.replace("!\n", "!\n<|splitter|>")
+            sentence = sentence.replace("!\n\n", "!\n\n<|splitter|>")
+            prep.append(sentence)
+        splitted = []
+        for block in prep: 
+            splitted.append(block.split("<|splitter|>"))
+        final = [item for sublist in splitted for item in sublist]
+        out[where-1] = final
     return out
 
 
@@ -377,7 +425,7 @@ def correct_data(trans):
             
 def format_reloads_model_2(data,key):
     titles = ["Number of wrong sentences", "Number of Mistakes", "Number of tokens",
-          "Errors per Token","Error per sentence"]
+          "Errors per Token","Error per sentence","trash filtered"]
     plt.figure(figsize=(20,20))
     
     for x in range(len(titles)):

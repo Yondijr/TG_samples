@@ -1,4 +1,3 @@
-# utility functions for the evaluation
 import torch
 import pickle
 from transformers import GPT2Tokenizer, GPT2LMHeadModel, modeling_utils, GPT2Config, modeling_gpt2, GPT2Model, GPT2PreTrainedModel, GPT2Config
@@ -14,6 +13,24 @@ import language_check
 from functools import reduce
 import difflib
 import matplotlib.pyplot as plt
+
+
+def generation(model,tokenizer,condition):
+    sentence = condition
+    inp = torch.tensor(tokenizer.encode(condition)).unsqueeze(0)
+    inp = inp.to("cuda")
+    with torch.no_grad():
+        for x in range(1024 - len(inp[0])): ## stop generation on the max length
+            outputs = model(inp)
+            predictions = outputs[0]
+            new = torch.tensor([[torch.argmax(predictions[0, -1, :]).item()]])
+            new = new.to("cuda")
+            inp = torch.cat((inp,new),1)
+            inp.to("cuda")
+            if new[0][0].item() == 50256: #EOS token
+                break 
+        predicted_text = tokenizer.decode(inp.tolist()[0][len(tokenizer.encode(condition)):])
+    return predicted_text
 
 def reload(model):
     out = {}
@@ -341,6 +358,16 @@ def load_and_split_finetune():
     return out
 
 
+
+def load_finetune():
+    out = []
+    stats = pickle.load(open("saves/classic_finetuning_translation_stats.p","rb"))
+    cor = pickle.load(open("saves/classic_finetuning_translation.p","rb"))
+    for x in range (len(stats)):
+        out.append(grammar_stats(stats[x],len(cor[x])+ stats[x][-1]))
+    return out
+
+
 def load_examples(folder):
     onlyfiles = [f for f in listdir(folder) if isfile(join(folder, f))]
     out = [None] * len(onlyfiles)
@@ -396,6 +423,24 @@ def calculate_stats(translations,data,name):
         results.append(translation_accuracy_new_for(translations[x],data))
     pickle.dump(results, open("saves/" + name + ".p","wb"))
     
+    
+def split_eos(data):
+    prep = []
+    for block in data:
+        sentence = block.replace(". ", ".<|splitter|>")
+        sentence = sentence.replace("? ", "?<|splitter|>")
+        sentence = sentence.replace("! ", "!<|splitter|>")
+        sentence = sentence.replace(".\n", ".\n<|splitter|>")
+        sentence = sentence.replace(".\n\n", ".\n\n<|splitter|>")
+        sentence = sentence.replace("?\n", "?\n<|splitter|>")
+        sentence = sentence.replace("?\n\n", "?\n\n<|splitter|>")
+        sentence = sentence.replace("!\n", "!\n<|splitter|>")
+        sentence = sentence.replace("!\n\n", "!\n\n<|splitter|>")
+        prep.append(sentence)
+    splitted = []
+    for block in prep: 
+        splitted.append(block.split("<|splitter|>"))
+    return splitted
     
 def calculate_model(model,data):
     calculate_stats(model["3"]['test_all_wrong_700'],data["test_700"],"3_test_all_wrong_700")
@@ -458,3 +503,7 @@ def extend_x_2(data,where):
     for x in data[:,:,where]: 
         out.append(np.array([x,axis]))
     return out
+
+def extend_x_3(data):
+    axis = [5,10,17,20]
+    return np.array([data,axis])

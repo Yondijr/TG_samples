@@ -1,18 +1,20 @@
 import torch
 import pickle
-from transformers import GPT2Tokenizer, GPT2LMHeadModel, modeling_utils, GPT2Config, modeling_gpt2, GPT2Model, GPT2PreTrainedModel, GPT2Config
+#from transformers import GPT2Tokenizer, GPT2LMHeadModel, modeling_utils, GPT2Config, modeling_gpt2, GPT2Model, GPT2PreTrainedModel, GPT2Config
 import copy
 import operator
 import json
 import numpy as np
 import pandas as pd
+import language_check
 import os
 from os import listdir
 from os.path import isfile, join
-import language_check
+#import language_check
 from functools import reduce
 import difflib
 import matplotlib.pyplot as plt
+from transformers import GPT2Tokenizer
 
 
 def generation(model,tokenizer,condition):
@@ -89,11 +91,11 @@ def load_data():
     out["full"] = load_model("full")
     return out
 
-def get_untrained_model_sent():
-    data = open("splitOnEosDataset_v2_test.txt","r+")
+def get_untrained_model_sent(maxN=1000):
+    data = open("splitOnEosDataset_v2_test.txt","r+",encoding="utf-8")
     data= data.read()
     data = data.split("<|endoftext|>")
-    return data[:5000]
+    return data[:maxN]
 
 def correct_base():
     out = get_untrained_model_sent()
@@ -117,6 +119,72 @@ def load_base():
     stats = pickle.load(open("saves/base_translation_stats.p","rb"))
     out = grammar_stats(stats,int(len(corrected)+stats[-1]))
     return out
+
+class filter_examples:
+    def __init__(self): 
+        self.trans = load_data()
+        self.org = self.sort_base()
+        self.cor, self.stats = correct(self.trans["full"]['test_no_filter_long'][0])
+        self.corB, self.statsB = correct(self.org,True)
+        self.mistakeDict,   self.mistakeDictB = self.get_error_types()
+        self.upgr = self.get_upgrades()
+    
+    def get_error_types(self):
+        types = {}
+        for x in range(len(self.stats[2])):
+            if self.stats[2][x] not in types: 
+                types[self.stats[2][x]] = [self.stats[4][x][-1]]
+            else: 
+                types[self.stats[2][x]].append(self.stats[4][x][-1])
+                
+                
+        typesB = {}
+        for x in range(len(self.statsB[2])):
+            if self.statsB[2][x] not in typesB:
+                typesB[self.statsB[2][x]] = [self.statsB[4][x][-1]]
+            else: 
+                typesB[self.statsB[2][x]].append(self.statsB[4][x][-1])
+        return types, typesB
+    
+    def sort_base(self):
+        base = get_untrained_model_sent(2002)
+        filtered = []
+        for x in range(len(base)):
+            if x %2 == 1:
+                filtered.append(base[x])
+        return filtered
+    
+    def get_mistake_types(self):
+        print("TRANSLATIONS:" + str(self.mistakeDict.keys()))
+        print("Original:" + str(self.mistakeDictB.keys()))
+    
+    def get_upgrades(self):
+        upgrades = {}
+        for key in self.mistakeDictB: 
+            for x in self.mistakeDictB[key]:
+                if key in self.mistakeDict.keys():
+                    if x not in self.mistakeDict[key]:
+                        if key not in upgrades:
+                            upgrades[key] = [x]
+                        else: 
+                            upgrades[key].append(x)
+                else: 
+                    upgrades[key] = [self.mistakeDictB[key], "ALL upgraded"]
+        return upgrades
+    
+    def example(self,Mtype,nr=1):
+        if self.upgr[Mtype][-1] =="ALL upgraded":
+            print("Mistake type: " + Mtype + " /ALL upgraded") 
+            for x in range(nr):  
+                nrs = self.upgr[Mtype][0][:nr]
+        else:
+            print("Mistake type: " + Mtype) 
+            for x in range(nr):  
+                nrs = self.upgr[Mtype][:nr]
+        for y in nrs: 
+            print("Original:" + self.org[y])
+            print("Translation:"  + self.trans["full"]['test_no_filter_long'][0][y])
+            print(y)
 
 def load_grammar():
     out = {}
@@ -354,7 +422,7 @@ def load_and_split_finetune():
         for block in prep: 
             splitted.append(block.split("<|splitter|>"))
         final = [item for sublist in splitted for item in sublist]
-        out[where-1] = final
+        out[where-1] = final[:1000]
     return out
 
 
@@ -365,6 +433,7 @@ def load_finetune():
     cor = pickle.load(open("saves/classic_finetuning_translation.p","rb"))
     for x in range (len(stats)):
         out.append(grammar_stats(stats[x],len(cor[x])+ stats[x][-1]))
+        print(len(cor[x])+ stats[x][-1])
     return out
 
 
@@ -483,6 +552,10 @@ def format_reloads_model_2(data,key):
         else:
             plt.plot(data[key][:,:,x].T)
         plt.legend(["train","test_700",'test_long','test_nf_long','test_nf_700'])
+        
+        
+
+    
 
 def format_reloads_dataset_2(data,key):
     titles = ["Number of wrong sentences", "Number of Mistakes", "Number of tokens",
